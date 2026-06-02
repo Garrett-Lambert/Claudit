@@ -469,6 +469,7 @@ function updatePayConf(pk,field,val){
   if(!payConf[pk])payConf[pk]={amtPaid:"",status:"Pending"};
   payConf[pk][field]=val;
   savePayConf(payConf);
+  recalcStats();
 }
 
 function setPayStatus(pk,status){
@@ -476,7 +477,42 @@ function setPayStatus(pk,status){
   if(!payConf[pk])payConf[pk]={amtPaid:"",status:"Pending"};
   payConf[pk].status=status;
   savePayConf(payConf);
+  recalcStats();
   renderConfirmTab();
+}
+
+// --- Live stats recalculation ------------------------------------------------
+function recalcStats(){
+  if(!aRows.length)return;
+  var payConf=getPayConf();
+  var fmt=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
+  var totalApproved=0,totalSuggested=0,disputeAmount=0;
+  aRows.forEach(function(r){
+    var pk=payKey(r.sessionId,r.rowIdx);
+    var conf=payConf[pk]||{amtPaid:"",status:"Pending"};
+    if(r.status==="ok"){
+      totalApproved+=r.amtNum;
+    } else if(conf.status==="Confirmed"&&conf.amtPaid){
+      var paid=parseFloat(String(conf.amtPaid).replace(/[$, ]/g,""))||0;
+      totalApproved+=paid;
+    } else if(conf.status==="Disputed"){
+      if(r.suggested!==null)totalSuggested+=r.suggested;
+      disputeAmount+=(r.amtNum-(r.suggested||0));
+    } else {
+      if(r.suggested!==null){totalSuggested+=r.suggested;disputeAmount+=(r.amtNum-r.suggested);}
+    }
+  });
+  var totalToPay=totalApproved+totalSuggested;
+  var statCards=document.querySelectorAll("#vp-audit .sc");
+  statCards.forEach(function(card){
+    var lbl=card.querySelector(".lb");
+    var vl=card.querySelector(".vl");
+    if(!lbl||!vl)return;
+    var t=lbl.textContent.trim().toLowerCase();
+    if(t==="approved to pay"){vl.textContent=fmt(totalApproved);}
+    if(t==="dispute amount"){vl.textContent=fmt(disputeAmount);}
+    if(t==="total recommended to pay"){vl.textContent=fmt(totalToPay);}
+  });
 }
 
 // ─── History Tab ──────────────────────────────────────────────────────────
