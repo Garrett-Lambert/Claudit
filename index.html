@@ -481,37 +481,53 @@ function setPayStatus(pk,status){
   renderConfirmTab();
 }
 
+// --- Shared totals calculator (used by stats, Excel export, GS export) ------
+function calcTotals(){
+  var payConf=getPayConf();
+  var totalApproved=0,disputeAmount=0,totalSuggested=0;
+  aRows.forEach(function(r){
+    if(r.status==="ok"){
+      // Clean row — always approved at billed amount
+      totalApproved+=r.amtNum;
+    } else {
+      var pk=payKey(r.sessionId,r.rowIdx);
+      var conf=payConf[pk]||{amtPaid:"",status:"Pending"};
+      if(conf.status==="Confirmed"&&conf.amtPaid){
+        // Confirmed with amount — approved=paid, dispute=billed-paid
+        var paid=parseFloat(String(conf.amtPaid).replace(/[$,\s]/g,""))||0;
+        totalApproved+=paid;
+        disputeAmount+=(r.amtNum-paid);
+      } else if(conf.status==="Disputed"){
+        // Disputed — recommend suggested, dispute=billed-suggested
+        var sug=r.suggested||0;
+        totalSuggested+=sug;
+        disputeAmount+=(r.amtNum-sug);
+      } else {
+        // Pending — recommend suggested, dispute=billed-suggested
+        if(r.suggested!==null){
+          totalSuggested+=r.suggested;
+          disputeAmount+=(r.amtNum-r.suggested);
+        }
+      }
+    }
+  });
+  return{approved:totalApproved,dispute:disputeAmount,total:totalApproved+totalSuggested};
+}
+
 // --- Live stats recalculation ------------------------------------------------
 function recalcStats(){
   if(!aRows.length)return;
-  var payConf=getPayConf();
+  var t=calcTotals();
   var fmt=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
-  var totalApproved=0,totalSuggested=0,disputeAmount=0;
-  aRows.forEach(function(r){
-    var pk=payKey(r.sessionId,r.rowIdx);
-    var conf=payConf[pk]||{amtPaid:"",status:"Pending"};
-    if(r.status==="ok"){
-      totalApproved+=r.amtNum;
-    } else if(conf.status==="Confirmed"&&conf.amtPaid){
-      var paid=parseFloat(String(conf.amtPaid).replace(/[$, ]/g,""))||0;
-      totalApproved+=paid;
-    } else if(conf.status==="Disputed"){
-      if(r.suggested!==null)totalSuggested+=r.suggested;
-      disputeAmount+=(r.amtNum-(r.suggested||0));
-    } else {
-      if(r.suggested!==null){totalSuggested+=r.suggested;disputeAmount+=(r.amtNum-r.suggested);}
-    }
-  });
-  var totalToPay=totalApproved+totalSuggested;
   var statCards=document.querySelectorAll("#vp-audit .sc");
   statCards.forEach(function(card){
     var lbl=card.querySelector(".lb");
     var vl=card.querySelector(".vl");
     if(!lbl||!vl)return;
-    var t=lbl.textContent.trim().toLowerCase();
-    if(t==="approved to pay"){vl.textContent=fmt(totalApproved);}
-    if(t==="dispute amount"){vl.textContent=fmt(disputeAmount);}
-    if(t==="total recommended to pay"){vl.textContent=fmt(totalToPay);}
+    var lb=lbl.textContent.trim().toLowerCase();
+    if(lb==="approved to pay"){vl.textContent=fmt(t.approved);}
+    if(lb==="dispute amount"){vl.textContent=fmt(t.dispute);}
+    if(lb==="total recommended to pay"){vl.textContent=fmt(t.total);}
   });
 }
 
@@ -618,6 +634,10 @@ async function expGS(){
     csvRows.push(row.map(escape).join(","));
   });
   var csv=csvRows.join("\n");
+  var expTotalsGS=calcTotals();
+  var fmtGS=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
+  csvRows.push(",,,,,,,,,DISPUTE AMOUNT,"+fmtGS(expTotalsGS.dispute)+",,");
+  csvRows.push(",,,,,,,,,TOTAL RECOMMENDED TO PAY,"+fmtGS(expTotalsGS.total)+",,");
   var fname="LVT_audit_"+new Date().toISOString().slice(0,10);
   try{
     var resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,mcp_servers:[{type:"url",url:"https://drivemcp.googleapis.com/mcp/v1",name:"google-drive"}],messages:[{role:"user",content:"Create a Google Sheet from this CSV data. Title it '"+fname+"'. Return only the URL of the created sheet, nothing else.\n\n"+csv}]})});
@@ -652,13 +672,11 @@ function expXL(){
     o["Payment Status"]=payStatus;
     return o;
   });
-  var expApproved=0,expSuggested=0,expDispute=0;
-  aRows.forEach(function(r){if(r.status==="ok"){expApproved+=r.amtNum;}else if(r.suggested!==null){expSuggested+=r.suggested;expDispute+=(r.amtNum-r.suggested);}});
-  var expTotal=expApproved+expSuggested;
+  var expTotals=calcTotals();
   var fmt2=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
   rows.push({});
-  rows.push({"Row #":"","Work Order/Invoice":"","Service":"DISPUTE AMOUNT","Amount":fmt2(expDispute),"Status":"","Issues":""});
-  rows.push({"Row #":"","Work Order/Invoice":"","Service":"TOTAL RECOMMENDED TO PAY","Amount":fmt2(expTotal),"Status":"","Issues":""});
+  rows.push({"Row #":"","Work Order/Invoice":"","Service":"DISPUTE AMOUNT","Amount":fmt2(expTotals.dispute),"Status":"","Issues":""});
+  rows.push({"Row #":"","Work Order/Invoice":"","Service":"TOTAL RECOMMENDED TO PAY","Amount":fmt2(expTotals.total),"Status":"","Issues":""});
   var ws=XLSX.utils.json_to_sheet(rows);
   ws["!cols"]=[{wch:6},{wch:18},{wch:18},{wch:20},{wch:26},{wch:20},{wch:12},{wch:14},{wch:12},{wch:6},{wch:60},{wch:12},{wch:14}];
   var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Audit Results");
