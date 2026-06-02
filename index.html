@@ -551,7 +551,7 @@ function renderTrendsTab(){
   panel.innerHTML=
     '<div class="stats" style="grid-template-columns:repeat(4,1fr)">'+sc2("Total Sessions",hist.length,"var(--k)")+sc2("Total Rows Audited",lifetimeTotal,"var(--k)")+sc2("Lifetime Approved",fmt(lifetimeApproved),"var(--g)")+sc2("Confirmations",totalConf+" confirmed","var(--g)")+"</div>"
     +'<div class="card"><div class="ch"><div class="bar"></div><h4>Flags by Vendor</h4></div><div style="padding:14px">'+vendorRows+'</div></div>'
-    +'<div class="stats" style="grid-template-columns:repeat(3,1fr)">'+sc2("Confirmed Payments",totalConf,"var(--g)")+sc2("Disputed Payments",totalDisp,"var(--r)")+sc2("Pending Review",totalPend,"var(--w)")+"</div>';
+    +'<div class="stats" style="grid-template-columns:repeat(3,1fr)">'+sc2("Confirmed Payments",totalConf,"var(--g)")+sc2("Disputed Payments",totalDisp,"var(--r)")+sc2("Pending Review",totalPend,"var(--w)")+"</div>";
 }
 
 // ─── Export to Excel (with Payment Confirmation columns) ──────────────────
