@@ -78,6 +78,10 @@ table.rt tr:hover td{background:rgba(0,161,154,.04)}
 .b-conf{background:#0d2e20;color:#2ecc71;border:1px solid #1a5e35}
 .b-disp{background:#2e0d0d;color:#e74c3c;border:1px solid #5e1a1a}
 .b-total{background:#1a1a1a;color:#888;border:1px solid #444}
+.b-flag{background:#2e1a00;color:#e67e22;border:1px solid #5e3a00}
+.flag-btn{background:none;border:1px solid var(--g7);border-radius:2px;color:var(--g7);font-size:10px;padding:2px 5px;cursor:pointer;line-height:1}
+.flag-btn:hover{border-color:var(--w);color:var(--w)}
+.flag-sel{background:var(--bg);border:1px solid var(--w);border-radius:2px;color:var(--wh);font-size:10px;padding:2px 4px;outline:none;margin-top:3px;width:100%}
 .il{font-size:10px;line-height:1.5;margin-bottom:2px}
 .exp{background:none;border:1px solid var(--g7);border-radius:2px;color:var(--k);font-family:'Oswald',sans-serif;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;padding:4px 10px;cursor:pointer}
 .exp:hover{border-color:var(--k);background:rgba(0,161,154,.08)}
@@ -239,6 +243,54 @@ function getPayConf(){return lsGet("lvt_pay_conf")||{};}
 function savePayConf(m){lsSet("lvt_pay_conf",m);}
 function payKey(sessionId,rowIdx){return sessionId+"__"+rowIdx;}
 
+// ─── Manual override storage ────────────────────────────────────────────────
+function getOverrides(){return lsGet("lvt_overrides")||{};}
+function saveOverrides(m){lsSet("lvt_overrides",m);}
+var OVERRIDE_REASONS=["Requires Manager Review","Contract Exception","Disputed by Vendor","Incorrect Work Type","Duplicate Suspected","Amount Discrepancy","Missing Documentation"];
+
+function setOverride(pk,reason){
+  var ov=getOverrides();
+  if(!reason){delete ov[pk];}
+  else{ov[pk]=reason;}
+  saveOverrides(ov);
+  // Re-render just that row's flag cell
+  refreshFlagCell(pk,reason);
+}
+
+function refreshFlagCell(pk,reason){
+  var safeKey=pk.replace(/'/g,"&#39;");
+  var cells=document.querySelectorAll(".flag-cell[data-pk='"+safeKey+"']");
+  cells.forEach(function(cell){
+    cell.innerHTML=buildFlagCellInner(pk,reason);
+  });
+}
+
+function buildFlagCellInner(pk,reason){
+  var safeKey=pk.replace(/'/g,"&#39;");
+  if(reason){
+    return "<div style='display:flex;flex-direction:column;gap:2px'>"
+      +"<span class='badge b-flag'>&#9872; FLAGGED</span>"
+      +"<span style='font-size:9px;color:var(--w)'>"+xe(reason)+"</span>"
+      +"<select class='flag-sel' data-pk='"+safeKey+"' onchange='setOverride(this.dataset.pk,this.value)'>"
+      +"<option value=''>— Remove Flag —</option>"
+      +OVERRIDE_REASONS.map(function(r){return "<option value='"+xe(r)+"'"+(r===reason?" selected":"")+">"+xe(r)+"</option>";}).join("")
+      +"</select></div>";
+  } else {
+    return "<button class='flag-btn' data-pk='"+safeKey+"' onclick='showFlagSelect(this)'>&#9872;</button>";
+  }
+}
+
+function showFlagSelect(btn){
+  var pk=btn.dataset.pk;
+  var safeKey=pk.replace(/'/g,"&#39;");
+  var cell=btn.closest(".flag-cell");
+  if(!cell)return;
+  cell.innerHTML="<select class='flag-sel' data-pk='"+safeKey+"' onchange='setOverride(this.dataset.pk,this.value)'>"
+    +"<option value=''>— Select reason —</option>"
+    +OVERRIDE_REASONS.map(function(r){return "<option value='"+xe(r)+"'>"+xe(r)+"</option>";}).join("")
+    +"</select>";
+}
+
 // ─── Audit history storage ───────────────────────────────────────────────────
 function getHistory(){return lsGet("lvt_history")||[];}
 function saveHistory(h){lsSet("lvt_history",h);}
@@ -373,6 +425,11 @@ function go(){
         st="warning";
       }
       return{row:i+1,id:id,vd:vendorName,sv:sv,tk:tk,wt:wt,amt:ad,nt:nt,status:st,issues:iss,suggested:null,amtNum:amt,sessionId:currentSessionId,rowIdx:i,isTotal:true};
+    }
+
+    // ── ZERO DOLLAR ROW — always clean, skip all checks ────────────────
+    if(amt===0){
+      return{row:i+1,id:id,vd:vendorName,sv:sv,tk:tk,wt:wt,amt:"$0.00",nt:nt,status:"ok",issues:[],suggested:null,amtNum:0,sessionId:currentSessionId,rowIdx:i,isTotal:false,isZero:true};
     }
 
     // ── Cross-session duplicate check ────────────────────────────────────
@@ -529,6 +586,7 @@ function render(){
         +"<td>"+totalBadge+"</td>"
         +"<td>"+totalIss+"</td>"
         +"<td>"+dash+"</td>"
+        +"<td>"+dash+"</td>"
         +"</tr>";
     }
     // ── NORMAL ROW ───────────────────────────────────────────────────────
@@ -580,6 +638,21 @@ function render(){
     } else {
       approvedCell='<span class="apv-cell" data-pk="'+pk.replace(/'/g,"&#39;")+'" style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
     }
+    // Flag cell — only on CLEAN rows (manual override to flag)
+    var overrides=getOverrides();
+    var flagPk=payKey(r.sessionId,r.rowIdx);
+    var flagReason=r.status==="ok"?(overrides[flagPk]||""):null;
+    var safeFlag=flagPk.replace(/'/g,"&#39;");
+    var flagCell=r.status==="ok"
+      ?"<td class='flag-cell' data-pk='"+safeFlag+"'>"+buildFlagCellInner(flagPk,flagReason)+"</td>"
+      :"<td><span style='font-size:10px;color:var(--g7);font-style:italic'>—</span></td>";
+    // If clean row is manually flagged, update status badge and issue cell
+    var displayBadge=bdg(r.status);
+    var displayIss=issCell;
+    if(r.status==="ok"&&flagReason){
+      displayBadge='<span class="badge b-flag">&#9872; FLAGGED</span>';
+      displayIss='<div class="il" style="color:var(--w)">'+xe(flagReason)+'</div>';
+    }
     return "<tr>"
       +"<td style='font-family:monospace;color:var(--g7);font-size:10px'>"+r.row+"</td>"
       +"<td style='font-family:monospace;font-size:10px'>"+xe(r.id)+"</td>"
@@ -589,13 +662,14 @@ function render(){
       +"<td style='font-family:monospace;font-size:10px'>"+r.amt+"</td>"
       +"<td>"+sugCell+"</td>"
       +"<td>"+approvedCell+"</td>"
-      +"<td>"+bdg(r.status)+"</td>"
-      +"<td>"+issCell+"</td>"
+      +"<td>"+displayBadge+"</td>"
+      +"<td>"+displayIss+"</td>"
       +"<td>"+payCell+"</td>"
+      +flagCell
       +"</tr>";
   }).join("");
   function sc(l,v,c){return'<div class="sc"><div style="position:absolute;top:0;left:0;right:0;height:3px;background:'+c+'"></div><div class="lb">'+l+'</div><div class="vl" style="color:'+c+'">'+v+"</div></div>";}
-  var ths=ip?"<th>#</th><th>Invoice/WO</th><th>Description</th><th>Notes</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th>":"<th>#</th><th>Work Order</th><th>WO Task</th><th>Service</th><th>Work Type</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th>";
+  var ths=ip?"<th>#</th><th>Invoice/WO</th><th>Description</th><th>Notes</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th><th>Flag</th>":"<th>#</th><th>Work Order</th><th>WO Task</th><th>Service</th><th>Work Type</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th><th>Flag</th>";
 
   // Build panels
   var auditHTML=
@@ -896,42 +970,94 @@ function expXL(){
   if(!aRows.length)return;
   var ip=!!cMap.pdf;
   var payConf=getPayConf();
+  var overrides=getOverrides();
+  var fmt2=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
+
+  // Short issue code mapper
+  function issueCode(r,flagReason){
+    if(flagReason)return flagReason;
+    if(!r.issues||!r.issues.length)return"—";
+    var codes=[];
+    r.issues.forEach(function(x){
+      if(x.includes("Bundling"))codes.push("Bundling Violation");
+      else if(x.includes("Duplicate")&&x.includes("Cross"))codes.push("Cross-Session Duplicate");
+      else if(x.includes("Duplicate"))codes.push("Duplicate");
+      else if(x.includes("Fee violation"))codes.push("Fee Mismatch");
+      else if(x.includes("Math error"))codes.push("Math Error");
+      else if(x.includes("fee schedule"))codes.push("Needs Review");
+      else if(x.includes("No Work Order"))codes.push("Missing Reference");
+      else if(x.includes("Additional compensation"))codes.push("Approval Required");
+      else if(x.includes("Invoice total"))codes.push("Total Mismatch");
+      else codes.push("Review Required");
+    });
+    // Deduplicate
+    return codes.filter(function(v,i,a){return a.indexOf(v)===i;}).join(", ");
+  }
+
   var rows=aRows.map(function(r){
+    if(r.isTotal)return null; // skip total rows from export data rows
     var pk=payKey(r.sessionId,r.rowIdx);
     var conf=payConf[pk]||{amtPaid:"",status:"Pending"};
-    var amtPaid=r.status==="ok"?"—":conf.amtPaid||"";
-    var payStatus=r.status==="ok"?"—":conf.status||"Pending";
-    var o={"Row #":r.row,"Vendor":r.vd,"Work Order/Invoice":r.id};
+    var flagReason=r.status==="ok"?(overrides[pk]||""):"";
+
+    // Amount always formatted as $X.XX
+    var amtFmt=r.amtNum>0?fmt2(r.amtNum):"$0.00";
+
+    // Suggested: rule-based value
+    var sugFmt=r.status==="ok"||r.isZero?"—"
+      :r.suggested===null?"Needs Review"
+      :fmt2(r.suggested);
+
+    // Approved + Status + Issue Code logic
+    var approvedFmt,statusFmt,issueCodeFmt,payStatusFmt;
+    if(r.status==="ok"&&!flagReason){
+      approvedFmt="—";statusFmt="OK";issueCodeFmt="—";payStatusFmt="—";
+    } else if(r.status==="ok"&&flagReason){
+      approvedFmt="—";statusFmt="FLAGGED";issueCodeFmt=flagReason;payStatusFmt="—";
+    } else if(conf.status==="Confirmed"){
+      // Confirmed: approved=amt paid, issue code cleared, status=CONFIRMED
+      var paid=conf.amtPaid?conf.amtPaid:amtFmt;
+      // Normalize paid to $X.XX format
+      var paidNum=parseFloat(String(paid).replace(/[$,]/g,""));
+      approvedFmt=isNaN(paidNum)?paid:fmt2(paidNum);
+      statusFmt="CONFIRMED";
+      issueCodeFmt="—"; // Confirmed = resolved, no issue code
+      payStatusFmt="Confirmed";
+    } else if(conf.status==="Disputed"){
+      approvedFmt="$0.00";
+      statusFmt="DISPUTED";
+      issueCodeFmt=issueCode(r,"");
+      payStatusFmt="Disputed";
+    } else {
+      approvedFmt="—";
+      statusFmt=r.status.toUpperCase();
+      issueCodeFmt=issueCode(r,"");
+      payStatusFmt="Pending";
+    }
+
+    var o={};
+    o["Work Order"]=r.id;
     if(!ip)o["WO Task"]=r.tk;
     o["Service"]=r.sv;
-    if(ip)o["Notes"]=r.nt;else o["Work Type"]=r.wt;
-    o["Amount"]=r.amt;
-    var xlConf=payConf[payKey(r.sessionId,r.rowIdx)]||{amtPaid:"",status:"Pending"};
-    if(r.status==="ok"){
-      o["Suggested"]="—";o["Approved"]="—";
-    } else if(xlConf.status==="Confirmed"){
-      o["Suggested"]=r.suggested===null?"Needs Review":r.suggested===0?"$0.00":"$"+r.suggested.toFixed(2);
-      o["Approved"]=xlConf.amtPaid||r.amt;
-    } else if(xlConf.status==="Disputed"){
-      o["Suggested"]=r.suggested===null?"Needs Review":r.suggested===0?"$0.00":"$"+r.suggested.toFixed(2);
-      o["Approved"]="$0.00";
-    } else {
-      o["Suggested"]=r.suggested===null?"Needs Review":r.suggested===0?"$0.00":"$"+r.suggested.toFixed(2);
-      o["Approved"]="—";
-    }
-    o["Status"]=r.status.toUpperCase();
-    o["WOT Violation"]=r.issues.some(function(x){return x.includes("WOT");})?"YES":"";
-    o["Issues"]=r.issues.join("; ");
-    o["Payment Status"]=payStatus;
+    if(!ip)o["Work Type"]=r.wt;
+    o["Amount Billed"]=amtFmt;
+    o["Suggested"]=sugFmt;
+    o["Approved"]=approvedFmt;
+    o["Status"]=statusFmt;
+    o["Issue Code"]=issueCodeFmt;
+    o["Payment Status"]=payStatusFmt;
     return o;
-  });
+  }).filter(function(r){return r!==null;});
+
+  // Summary rows
   var expTotals=calcTotals();
-  var fmt2=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
   rows.push({});
-  rows.push({"Row #":"","Work Order/Invoice":"","Service":"DISPUTE AMOUNT","Amount":fmt2(expTotals.dispute),"Status":"","Issues":""});
-  rows.push({"Row #":"","Work Order/Invoice":"","Service":"TOTAL RECOMMENDED TO PAY","Amount":fmt2(expTotals.total),"Status":"","Issues":""});
+  rows.push({"Work Order":"","Service":"DISPUTE AMOUNT","Amount Billed":fmt2(expTotals.dispute)});
+  rows.push({"Work Order":"","Service":"TOTAL RECOMMENDED TO PAY","Amount Billed":fmt2(expTotals.total)});
+
   var ws=XLSX.utils.json_to_sheet(rows);
-  ws["!cols"]=[{wch:6},{wch:18},{wch:18},{wch:20},{wch:26},{wch:20},{wch:12},{wch:14},{wch:12},{wch:6},{wch:60},{wch:12},{wch:14}];
+  // Column widths: WO, WOTask, Service, WorkType, AmtBilled, Suggested, Approved, Status, IssueCode, PayStatus
+  ws["!cols"]=[{wch:16},{wch:18},{wch:28},{wch:18},{wch:14},{wch:14},{wch:14},{wch:12},{wch:24},{wch:14}];
   var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Audit Results");
   XLSX.writeFile(wb,"LVT_audit_"+new Date().toISOString().slice(0,10)+".xlsx");
 }
