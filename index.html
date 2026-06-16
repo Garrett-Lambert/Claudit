@@ -558,6 +558,12 @@ function go(){
         var df=Math.abs(amt-rt)/rt;
         if(df>0.05){iss.push("Fee violation: expected $230 (Take Down), billed $"+amt.toFixed(2)+" ("+(df*100).toFixed(1)+"% off).");if(st==="ok")st="warning";suggested=rt;}
       }
+      // Smart Generator Refuel: $175 or $230 are both valid
+      if(!matched&&(sn.includes("smart generator")||sn.includes("generator refuel"))){
+        matched=true;
+        var validRefuel=Math.abs(amt-175)/175<=0.05||Math.abs(amt-230)/230<=0.05;
+        if(!validRefuel){iss.push("Fee violation: Smart Generator Refuel should be $175 or $230, billed $"+amt.toFixed(2)+".");if(st==="ok")st="warning";suggested=175;}
+      }
       // Standard fee schedule match
       if(!matched){
         for(var fi=0;fi<fks.length;fi++){
@@ -619,7 +625,8 @@ function go(){
             if(st==="ok")st="error";suggested=0;
           } else {
             // Check for valid offsite move: Take Down + New Setup (+ optional Transport) = $629
-            var grpHasSetup=nonPreDep.some(function(g){
+            // Check ALL rows in group (including $0 Transport) for Setup presence
+            var grpHasSetup=grp.some(function(g){
               var gsv=cMap.pdf?String(g.row[2]||""):gv(g.row,"sv");
               var gwt=cMap.pdf?String(g.row[5]||""):gv(g.row,"wt");
               return isSetup(gsv,gwt);
@@ -627,10 +634,10 @@ function go(){
             var resolved=resolveGroupFee(grpSvcs,grpWts);
             var correctFee=resolved.fee;
             var correctLabel=resolved.label;
-            var isValidOffsite=grpHasTakeDown&&grpHasSetup;
-            // Valid offsite move (Take Down + Setup ± Transport) — all rows clean
-            if(isValidOffsite&&!resolved.fee===299){
-              // all rows clean — do nothing
+            // Valid offsite: Take Down + Setup (± Transport at any amount) → $629, all clean
+            var isValidOffsite=grpHasTakeDown&&grpHasSetup&&resolved.fee!==299;
+            if(isValidOffsite){
+              // All rows clean — do nothing
             } else if(totalCharged>correctFee+0.02){
               var overbilled=totalCharged-correctFee;
               var matchingRow=nonPreDep.find(function(g){return Math.abs(ga(g.row)-correctFee)<=0.02;});
