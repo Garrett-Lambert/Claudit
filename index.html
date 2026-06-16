@@ -157,7 +157,8 @@ table.rt tr:hover td{background:rgba(0,161,154,.04)}
     <!-- VENDOR NAME FIELD -->
     <div>
       <div class="slbl">Vendor Name</div>
-      <input class="fi" type="text" id="vendorName" placeholder="e.g. ABC Security Services" oninput="saveVendorPref()"/>
+      <input class="fi" type="text" id="vendorName" placeholder="e.g. ABC Security Services" list="vendorList" oninput="saveVendorPref()"/>
+      <datalist id="vendorList"></datalist>
     </div>
     <div id="xMap" style="display:none">
       <div class="slbl">Column Mapping</div>
@@ -207,11 +208,14 @@ table.rt tr:hover td{background:rgba(0,161,154,.04)}
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 var mode='x',pData=[],hdrs=[],cMap={amts:[],pdf:false},aRows=[];
-var fees=[
+var DEFAULT_FEES=[
   {s:"Standard Service",r:230},{s:"Setup New Location",r:399},{s:"Same Site Move",r:299},
   {s:"Offsite Move - Take Down and Transport",r:230},{s:"Offsite Move - New Setup",r:399},
-  {s:"Intake",r:125},{s:"Pre-Deployment",r:75},{s:"Forklift Fee Per Unit",r:125}
+  {s:"Intake",r:125},{s:"Pre-Deployment",r:75},{s:"Forklift Fee Per Unit",r:125},
+  {s:"Smart Generator Refuel",r:175}
 ];
+var fees=lsGet("lvt_fees")||DEFAULT_FEES.map(function(f){return{s:f.s,r:f.r};});
+function saveFees(){lsSet("lvt_fees",fees);}
 var BUNDLED=["troubleshoot","refuel","deactivat","location move"];
 var ADDL=["mileage","mast cable","scissor lift","bucket truck","additional equipment"];
 
@@ -220,8 +224,27 @@ function lsGet(k){try{return JSON.parse(localStorage.getItem(k)||"null");}catch(
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 
 // ─── Vendor preference ───────────────────────────────────────────────────────
-function saveVendorPref(){lsSet("lvt_vendor",document.getElementById("vendorName").value);}
-function loadVendorPref(){var v=lsGet("lvt_vendor");if(v)document.getElementById("vendorName").value=v;}
+function getVendorList(){return lsGet("lvt_vendor_list")||[];}
+function saveVendorPref(){
+  var v=document.getElementById("vendorName").value.trim();
+  lsSet("lvt_vendor",v);
+  if(v){
+    var list=getVendorList();
+    if(list.indexOf(v)<0){list.unshift(v);if(list.length>20)list=list.slice(0,20);lsSet("lvt_vendor_list",list);}
+    renderVendorList();
+  }
+}
+function loadVendorPref(){
+  var v=lsGet("lvt_vendor");
+  if(v)document.getElementById("vendorName").value=v;
+  renderVendorList();
+}
+function renderVendorList(){
+  var dl=document.getElementById("vendorList");
+  if(!dl)return;
+  var list=getVendorList();
+  dl.innerHTML=list.map(function(v){return"<option value='"+xe(v)+"'>";}).join("");
+}
 
 // ─── WO Memory (cross-session duplicate tracking) ───────────────────────────
 function getWOMem(){return lsGet("lvt_wo_mem")||{};}
@@ -253,8 +276,46 @@ function setOverride(pk,reason){
   if(!reason){delete ov[pk];}
   else{ov[pk]=reason;}
   saveOverrides(ov);
-  // Re-render just that row's flag cell
+  // Re-render the flag cell and pay cell for this row
   refreshFlagCell(pk,reason);
+  refreshPayCellForOverride(pk,reason);
+  recalcStats();
+}
+
+// Show/hide payment confirmation cell on a manually flagged clean row
+function refreshPayCellForOverride(pk,reason){
+  var safeKey=pk.replace(/'/g,"&#39;");
+  var payConf=getPayConf();
+  var conf=payConf[pk]||{amtPaid:"",status:"Pending"};
+  // Find the pay-cell span for this row using data-ovpk attribute
+  var cells=document.querySelectorAll(".ov-pay-cell[data-ovpk='"+safeKey+"']");
+  cells.forEach(function(cell){
+    if(reason){
+      // Show pay confirmation — same as flagged rows
+      var confBtnCls=conf.status==="Confirmed"?"pay-btn confirmed":"pay-btn";
+      var dispBtnCls=conf.status==="Disputed"?"pay-btn disputed":"pay-btn";
+      var statusPill=conf.status==="Confirmed"?'<span class="badge b-conf" style="font-size:7px">CONF</span>'
+        :conf.status==="Disputed"?'<span class="badge b-disp" style="font-size:7px">DISP</span>'
+        :'<span class="badge b-pend" style="font-size:7px">PEND</span>';
+      cell.innerHTML="<div style='display:flex;align-items:center;gap:4px;flex-wrap:wrap'>"
+        +"<input class='pay-input' type='text' placeholder='$0.00'"
+        +" value='"+xe(conf.amtPaid)+"'"
+        +" data-pk='"+safeKey+"'"
+        +" onchange='upConf(this)'"
+        +" style='width:72px'/>"
+        +"<button class='"+confBtnCls+"' data-pk='"+safeKey+"' onclick='spConf(this,1)'>&#10003;</button>"
+        +"<button class='"+dispBtnCls+"' data-pk='"+safeKey+"' onclick='spConf(this,0)'>&#10007;</button>"
+        +statusPill
+        +"</div>";
+    } else {
+      cell.innerHTML='<span style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
+    }
+  });
+  // Also refresh approved cell
+  var apvCells=document.querySelectorAll(".apv-cell[data-pk='"+safeKey+"']");
+  apvCells.forEach(function(cell){
+    if(!reason){cell.style.color="var(--g7)";cell.style.fontStyle="italic";cell.textContent="—";}
+  });
 }
 
 function refreshFlagCell(pk,reason){
@@ -312,8 +373,8 @@ function showVTab(name){
   if(name==="trends")renderTrendsTab();
 }
 
-function rf(){document.getElementById("fees").innerHTML=fees.map(function(f,i){return '<div class="fg" style="margin-bottom:2px"><input class="fi" type="text" value="'+xe(f.s)+'" oninput="fees['+i+'].s=this.value"/><input class="fi" type="number" value="'+f.r+'" oninput="fees['+i+'].r=parseFloat(this.value)||0"/><button class="rmb" onclick="fees.splice('+i+',1);rf()">&#10005;</button></div>';}).join("");}
-function addFee(){fees.push({s:"",r:""});rf();}
+function rf(){document.getElementById("fees").innerHTML=fees.map(function(f,i){return '<div class="fg" style="margin-bottom:2px"><input class="fi" type="text" value="'+xe(f.s)+'" oninput="fees['+i+'].s=this.value;saveFees()"/><input class="fi" type="number" value="'+f.r+'" oninput="fees['+i+'].r=parseFloat(this.value)||0;saveFees()"/><button class="rmb" onclick="fees.splice('+i+',1);rf();saveFees()">&#10005;</button></div>';}).join("");}
+function addFee(){fees.push({s:"",r:""});rf();saveFees();}
 function xe(s){return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");}
 rf();
 loadVendorPref();
@@ -357,12 +418,7 @@ function ga(row){if(cMap.pdf)return typeof row[3]==="number"?row[3]:parseFloat(r
 function tn(v){if(v==null||v==="")return 0;return parseFloat(String(v).replace(/[$, ]/g,""))||0;}
 function no(v){return String(v||"").toLowerCase().trim();}
 
-function isAddon(sv,wt){
-  var s=no(sv),w=no(wt);
-  return s.includes("intake")||s.includes("pdqc")||w.includes("intake")
-      ||s.includes("pre-deployment")||s.includes("pre deployment")||s.includes("predeployment")
-      ||w.includes("pre-deployment")||w.includes("pre deployment")||w.includes("predeployment");
-}
+function isAddon(sv,wt){return isIntake(sv,wt)||isPreDep(sv,wt);}
 function isIntake(sv,wt){
   var s=no(sv),w=no(wt);
   return s.includes("intake")||s.includes("pdqc")||w.includes("intake");
@@ -371,6 +427,45 @@ function isPreDep(sv,wt){
   var s=no(sv),w=no(wt);
   return s.includes("pre-deployment")||s.includes("pre deployment")||s.includes("predeployment")
       ||w.includes("pre-deployment")||w.includes("pre deployment")||w.includes("predeployment");
+}
+function isTakeDown(sv,wt){
+  var s=no(sv),w=no(wt);
+  return s.includes("take down")||s.includes("takedown")||w.includes("take down")||w.includes("takedown")
+      ||s.includes("take-down")||w.includes("take-down");
+}
+function isSetup(sv,wt){
+  var s=no(sv),w=no(wt);
+  return s.includes("setup")||w.includes("setup");
+}
+function isTransport(sv,wt){
+  var s=no(sv),w=no(wt);
+  return s.includes("transport")||w.includes("transport");
+}
+function isSameSite(sv,wt){
+  var s=no(sv),w=no(wt);
+  return s.includes("same site")||s.includes("same-site")||s.includes("onsite")||s.includes("on-site")
+      ||w.includes("same site")||w.includes("same-site")||w.includes("onsite")||w.includes("on-site");
+}
+// Resolve correct fee for a group of rows (non-addon only)
+function resolveGroupFee(grpSvcs,grpWts){
+  var allText=grpSvcs.join(" ")+" "+grpWts.join(" ");
+  var hasTakeDown=grpSvcs.some(function(s){return s.includes("take down")||s.includes("takedown")||s.includes("take-down");})
+    ||grpWts.some(function(w){return w.includes("take down")||w.includes("takedown")||w.includes("take-down");});
+  var hasSetup=grpSvcs.some(function(s){return s.includes("setup");})
+    ||grpWts.some(function(w){return w.includes("setup");});
+  var hasTransport=grpSvcs.some(function(s){return s.includes("transport");})
+    ||grpWts.some(function(w){return w.includes("transport");});
+  var hasSameSite=allText.includes("same site")||allText.includes("same-site")||allText.includes("onsite")||allText.includes("on-site");
+  // Onsite/same site overrides everything → $299
+  if(hasSameSite)return{fee:299,label:"Same Site Move ($299)"};
+  // Take Down + New Setup (+ optional Transport) → valid offsite move $629
+  if(hasTakeDown&&hasSetup)return{fee:629,label:"Offsite Move ($629)",validOffsite:true};
+  // Setup only → $399
+  if(hasSetup)return{fee:399,label:"Setup New Location ($399)"};
+  // Relocation → $399
+  if(allText.includes("relocation")||allText.includes("relocat"))return{fee:399,label:"Setup New Location ($399)"};
+  // Default → Standard Service $230
+  return{fee:230,label:"Standard Service ($230)"};
 }
 function isTotalRow(sv){
   var s=no(sv);
@@ -449,13 +544,30 @@ function go(){
     // ── Fee schedule check (skip add-ons) ────────────────────────────────
     if(!isAddon(sv,wt)&&amt>0){
       var fks=Object.keys(feeMap);var matched=false;
-      for(var fi=0;fi<fks.length;fi++){
-        var k=fks[fi];
-        if(sn===k||sn.includes(k)||(k.length>4&&k.split(" ").every(function(w){return sn.includes(w);}))){
-          matched=true;var rt=feeMap[k];if(rt===0){break;}
-          var df=Math.abs(amt-rt)/rt;
-          if(df>0.05){iss.push("Fee violation: expected $"+rt+", billed $"+amt.toFixed(2)+" ("+(df*100).toFixed(1)+"% off).");if(st==="ok")st="warning";suggested=rt;}
-          break;
+      // Setup alias: any service with "setup" → $399 (unless same site → $299)
+      if(!matched&&isSetup(sv,wt)){
+        matched=true;
+        var rt=isSameSite(sv,wt)?299:399;
+        var df=Math.abs(amt-rt)/rt;
+        if(df>0.05){iss.push("Fee violation: expected $"+rt+" (Setup), billed $"+amt.toFixed(2)+" ("+(df*100).toFixed(1)+"% off).");if(st==="ok")st="warning";suggested=rt;}
+      }
+      // Take Down alias: any service with "take down"/"takedown" → $230
+      if(!matched&&isTakeDown(sv,wt)){
+        matched=true;
+        var rt=230;
+        var df=Math.abs(amt-rt)/rt;
+        if(df>0.05){iss.push("Fee violation: expected $230 (Take Down), billed $"+amt.toFixed(2)+" ("+(df*100).toFixed(1)+"% off).");if(st==="ok")st="warning";suggested=rt;}
+      }
+      // Standard fee schedule match
+      if(!matched){
+        for(var fi=0;fi<fks.length;fi++){
+          var k=fks[fi];
+          if(sn===k||sn.includes(k)||(k.length>4&&k.split(" ").every(function(w){return sn.includes(w);}))){
+            matched=true;var rt=feeMap[k];if(rt===0){break;}
+            var df=Math.abs(amt-rt)/rt;
+            if(df>0.05){iss.push("Fee violation: expected $"+rt+", billed $"+amt.toFixed(2)+" ("+(df*100).toFixed(1)+"% off).");if(st==="ok")st="warning";suggested=rt;}
+            break;
+          }
         }
       }
       if(!matched){
@@ -490,24 +602,44 @@ function go(){
           // Correct fee determined by non-PreDep service types only
           var grpSvcs=nonPreDep.map(function(g){return no(cMap.pdf?String(g.row[2]||""):gv(g.row,"sv"));});
           var grpWts=nonPreDep.map(function(g){return no(cMap.pdf?String(g.row[5]||""):gv(g.row,"wt"));});
-          var allText=grpSvcs.join(" ")+" "+grpWts.join(" ");
-          var correctFee=230;var correctLabel="Standard Service ($230)";
-          if(allText.includes("setup")&&(allText.includes("transport")||allText.includes("take down"))){correctFee=399;correctLabel="Setup New Location ($399)";}
-          else if(allText.includes("setup")||allText.includes("new location")){correctFee=399;correctLabel="Setup New Location ($399)";}
-          else if((allText.includes("offsite")||allText.includes("off-site"))&&allText.includes("setup")){correctFee=629;correctLabel="Offsite Move ($629)";}
-          else if(allText.includes("same site")||allText.includes("same-site")){correctFee=299;correctLabel="Same Site Move ($299)";}
-          else if(allText.includes("relocation")||allText.includes("relocat")){correctFee=399;correctLabel="Setup New Location ($399)";}
-          if(totalCharged>correctFee+0.02){
-            var overbilled=totalCharged-correctFee;
-            // PreDep is NEVER flagged — pick keeper from nonPreDep rows only
-            var matchingRow=nonPreDep.find(function(g){return Math.abs(ga(g.row)-correctFee)<=0.02;});
-            var keeperIdx=matchingRow?matchingRow.i:nonPreDep[0].i;
-            // Only flag non-PreDep rows
-            if(!isPreDep(sv,wt)){
-              if(i===keeperIdx){st="ok";suggested=null;}
-              else{iss.push("Bundling violation: "+allCharged.length+" line items charged on same WO. Should be single fee of "+correctLabel+". Billed $"+totalCharged.toFixed(2)+", overbilled by $"+Math.abs(overbilled).toFixed(2)+".");if(st==="ok")st="error";suggested=0;}
+          // Check for invalid Take Down + PreDep combo
+          var grpHasPreDep=allCharged.some(function(g){
+            var gsv=cMap.pdf?String(g.row[2]||""):gv(g.row,"sv");
+            var gwt=cMap.pdf?String(g.row[5]||""):gv(g.row,"wt");
+            return isPreDep(gsv,gwt);
+          });
+          var grpHasTakeDown=nonPreDep.some(function(g){
+            var gsv=cMap.pdf?String(g.row[2]||""):gv(g.row,"sv");
+            var gwt=cMap.pdf?String(g.row[5]||""):gv(g.row,"wt");
+            return isTakeDown(gsv,gwt);
+          });
+          // Invalid combo: Take Down + PreDep — flag both
+          if(grpHasTakeDown&&grpHasPreDep){
+            iss.push("Invalid combination: Take Down and Pre-Deployment should not appear on the same WO.");
+            if(st==="ok")st="error";suggested=0;
+          } else {
+            // Check for valid offsite move: Take Down + New Setup (+ optional Transport) = $629
+            var grpHasSetup=nonPreDep.some(function(g){
+              var gsv=cMap.pdf?String(g.row[2]||""):gv(g.row,"sv");
+              var gwt=cMap.pdf?String(g.row[5]||""):gv(g.row,"wt");
+              return isSetup(gsv,gwt);
+            });
+            var resolved=resolveGroupFee(grpSvcs,grpWts);
+            var correctFee=resolved.fee;
+            var correctLabel=resolved.label;
+            var isValidOffsite=grpHasTakeDown&&grpHasSetup;
+            // Valid offsite move (Take Down + Setup ± Transport) — all rows clean
+            if(isValidOffsite&&!resolved.fee===299){
+              // all rows clean — do nothing
+            } else if(totalCharged>correctFee+0.02){
+              var overbilled=totalCharged-correctFee;
+              var matchingRow=nonPreDep.find(function(g){return Math.abs(ga(g.row)-correctFee)<=0.02;});
+              var keeperIdx=matchingRow?matchingRow.i:nonPreDep[0].i;
+              if(!isPreDep(sv,wt)){
+                if(i===keeperIdx){st="ok";suggested=null;}
+                else{iss.push("Bundling violation: "+allCharged.length+" line items charged on same WO. Should be single fee of "+correctLabel+". Billed $"+totalCharged.toFixed(2)+", overbilled by $"+Math.abs(overbilled).toFixed(2)+".");if(st==="ok")st="error";suggested=0;}
+              }
             }
-            // PreDep rows: always clean, no bundling flag
           }
         }
       }
@@ -555,7 +687,16 @@ function saveAuditToHistory(vendorName,sessionDate){
 function render(){
   var tot=aRows.length,wot=aRows.filter(function(r){return r.issues.some(function(x){return x.includes("WOT");});}).length,me=aRows.filter(function(r){return r.issues.some(function(x){return x.includes("Math error");});}).length,dp=aRows.filter(function(r){return r.status==="duplicate";}).length,fv=aRows.filter(function(r){return r.issues.some(function(x){return x.includes("Fee violation");});}).length,mw=aRows.filter(function(r){return r.issues.some(function(x){return x.includes("No Work Order");});}).length,is=aRows.filter(function(r){return r.status!=="ok";}).length,cl=tot-is;
   var pts=[];if(wot>0)pts.push(wot+" WOT violation"+(wot>1?"s":""));if(me>0)pts.push(me+" math error"+(me>1?"s":""));if(fv>0)pts.push(fv+" fee violation"+(fv>1?"s":""));if(dp>0)pts.push(dp+" duplicate"+(dp>1?"s":""));if(mw>0)pts.push(mw+" missing WO"+(mw>1?"s":""));
-  var narr=is===0?"All "+tot+" invoices passed all LVT billing rule checks. No issues found.":"Audited "+tot+" invoice"+(tot>1?"s":"")+" — "+is+" issue"+(is>1?"s":"")+" found: "+pts.join(", ")+". "+cl+" row"+(cl!==1?"s":"")+" are clean.";
+  var vendorDisp=document.getElementById("vendorName").value.trim()||"Unknown Vendor";
+  var totalBilled=0;aRows.forEach(function(r){if(!r.isTotal)totalBilled+=r.amtNum;});
+  var totalDisputeAmt=0;aRows.forEach(function(r){if(r.status!=="ok"&&r.suggested!==null)totalDisputeAmt+=(r.amtNum-r.suggested);});
+  var fmt2=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
+  var narr;
+  if(is===0){
+    narr="All "+tot+" invoices from "+vendorDisp+" passed LVT billing rule checks. Total billed: "+fmt2(totalBilled)+". No issues found.";
+  } else {
+    narr="Audited "+tot+" invoice"+(tot>1?"s":"")+" from "+vendorDisp+" — total billed "+fmt2(totalBilled)+". Found "+is+" issue"+(is>1?"s":"")+": "+pts.join(", ")+". "+cl+" row"+(cl!==1?"s":"")+" are clean."+(totalDisputeAmt>0?" Potential overbilling: "+fmt2(totalDisputeAmt)+".":"");
+  }
   var fmt=function(v){return"$"+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");};
   var totalApproved=0,totalSuggested=0,disputeAmount=0;
   aRows.forEach(function(r){if(r.status==="ok"){totalApproved+=r.amtNum;}else if(r.suggested!==null){totalSuggested+=r.suggested;disputeAmount+=(r.amtNum-r.suggested);}});
@@ -592,31 +733,41 @@ function render(){
     // ── NORMAL ROW ───────────────────────────────────────────────────────
     var pk=payKey(r.sessionId,r.rowIdx);
     var conf=payConf[pk]||{amtPaid:"",status:"Pending"};
-    var sugCell=r.status==="ok"
-      ?'<span style="font-size:10px;color:var(--g7);font-style:italic">—</span>'
-      :(r.suggested===null
+    // sugCell: clean rows and manually flagged rows always show —
+    var sugCell;
+    if(r.status==="ok"){
+      sugCell='<span style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
+    } else {
+      sugCell=r.suggested===null
         ?'<span style="font-size:10px;color:var(--w)">Needs Review</span>'
         :r.suggested===0
           ?'<span style="font-family:monospace;font-size:10px;color:var(--r)">$0.00</span>'
-          :'<span style="font-family:monospace;font-size:10px;color:var(--g)">$'+r.suggested.toFixed(2)+'</span>');
+          :'<span style="font-family:monospace;font-size:10px;color:var(--g)">$'+r.suggested.toFixed(2)+'</span>';
+    }
     var showIssues=r.status!=="ok"&&(r.suggested===null||r.suggested===0);
     var issCell=r.status==="ok"
       ?'<span style="font-size:10px;color:var(--g7);font-style:italic">—</span>'
       :showIssues
         ?(r.issues.length?r.issues.map(function(x){return '<div class="il" style="color:'+ic(r.status)+'">'+xe(x)+"</div>";}).join(""):'<span style="font-size:10px;color:var(--g7);font-style:italic">None</span>')
         :'<span style="font-size:10px;color:var(--g)">Fee updated</span>';
-    // Inline payment confirmation cell — only on flagged rows
+    // Inline payment confirmation cell — on flagged rows AND manually overridden clean rows
     var payCell;
-    if(r.status==="ok"){
-      payCell='<span style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
+    var overrides=getOverrides();
+    var flagReason=r.status==="ok"?(overrides[pk]||""):"";
+    var safeKey=pk.replace(/'/g,"&#39;");
+    var needsPayCell=r.status!=="ok"||flagReason;
+    if(!needsPayCell){
+      // Clean row with no override — wrap in ov-pay-cell div so it can be activated later
+      payCell="<div class='ov-pay-cell' data-ovpk='"+safeKey+"'>"
+        +'<span style="font-size:10px;color:var(--g7);font-style:italic">—</span>'
+        +"</div>";
     } else {
       var confBtnCls=conf.status==="Confirmed"?"pay-btn confirmed":"pay-btn";
       var dispBtnCls=conf.status==="Disputed"?"pay-btn disputed":"pay-btn";
       var statusPill=conf.status==="Confirmed"?'<span class="badge b-conf" style="font-size:7px">CONF</span>'
         :conf.status==="Disputed"?'<span class="badge b-disp" style="font-size:7px">DISP</span>'
         :'<span class="badge b-pend" style="font-size:7px">PEND</span>';
-      var safeKey=pk.replace(/'/g,"&#39;");
-      payCell="<div style='display:flex;align-items:center;gap:4px;flex-wrap:wrap'>"
+      var payInner="<div style='display:flex;align-items:center;gap:4px;flex-wrap:wrap'>"
         +"<input class='pay-input' type='text' placeholder='$0.00'"
         +" value='"+xe(conf.amtPaid)+"'"
         +" data-pk='"+safeKey+"'"
@@ -626,17 +777,20 @@ function render(){
         +"<button class='"+dispBtnCls+"' data-pk='"+safeKey+"' onclick='spConf(this,0)'>&#10007;</button>"
         +statusPill
         +"</div>";
+      // Wrap in ov-pay-cell so it can be refreshed by refreshPayCellForOverride
+      payCell="<div class='ov-pay-cell' data-ovpk='"+safeKey+"'>"+payInner+"</div>";
     }
-    // Approved cell — shows confirmed amt paid when confirmed, else dash
+    // Approved cell — shows for flagged rows AND manually overridden clean rows
     var approvedCell;
-    if(r.status==="ok"){
-      approvedCell='<span style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
+    var isManuallyFlagged=r.status==="ok"&&flagReason;
+    if(r.status==="ok"&&!isManuallyFlagged){
+      approvedCell='<span class="apv-cell" data-pk="'+safeKey+'" style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
     } else if(conf.status==="Confirmed"&&conf.amtPaid){
-      approvedCell='<span class="apv-cell" data-pk="'+pk.replace(/'/g,"&#39;")+'" style="font-family:monospace;font-size:10px;color:var(--g)">'+xe(conf.amtPaid)+'</span>';
+      approvedCell='<span class="apv-cell" data-pk="'+safeKey+'" style="font-family:monospace;font-size:10px;color:var(--g)">'+xe(conf.amtPaid)+'</span>';
     } else if(conf.status==="Disputed"){
-      approvedCell='<span class="apv-cell" data-pk="'+pk.replace(/'/g,"&#39;")+'" style="font-family:monospace;font-size:10px;color:var(--r)">$0.00</span>';
+      approvedCell='<span class="apv-cell" data-pk="'+safeKey+'" style="font-family:monospace;font-size:10px;color:var(--r)">$0.00</span>';
     } else {
-      approvedCell='<span class="apv-cell" data-pk="'+pk.replace(/'/g,"&#39;")+'" style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
+      approvedCell='<span class="apv-cell" data-pk="'+safeKey+'" style="font-size:10px;color:var(--g7);font-style:italic">—</span>';
     }
     // Flag cell — only on CLEAN rows (manual override to flag)
     var overrides=getOverrides();
@@ -677,7 +831,14 @@ function render(){
     +'<div class="stats r4">'+sc("Fee Violations",fv,fv>0?"var(--w)":"var(--g)")+sc("Duplicates",dp,dp>0?"var(--w)":"var(--g)")+sc("Clean Rows",cl,cl===tot?"var(--g)":"var(--g3)")+sc("Approved to Pay",fmt(totalApproved),"var(--g)")+"</div>"
     +'<div class="stats r4" style="grid-template-columns:repeat(2,1fr)">'+sc("Dispute Amount",fmt(disputeAmount),"var(--w)")+sc("Total Recommended to Pay",fmt(totalToPay),"var(--k)")+"</div>"
     +'<div class="sb"><div class="lb">&#9670; Audit Summary</div><p>'+narr+"</p></div>"
-    +'<div class="card"><div class="ch"><div class="bar"></div><h4>Audit Results</h4><button class="exp" onclick="expXL()">&#8595; Export to Excel</button><button class="exp" id="gsBtn" onclick="expGS()" style="margin-left:6px;background:rgba(0,161,154,.1);border-color:var(--k);color:var(--k)">&#9650; Export to Google Sheets</button></div>'
+    +'<div class="card"><div class="ch"><div class="bar"></div><h4>Audit Results</h4>'
+    +'<div style="display:flex;gap:4px;margin-left:8px">'
+    +'<button class="exp" id="flt-all" onclick="setFilter(this)" data-f="all" style="background:rgba(0,161,154,.2);border-color:var(--k)">All ('+tot+')</button>'
+    +'<button class="exp" id="flt-issues" onclick="setFilter(this)" data-f="issues">Issues ('+is+')</button>'
+    +'<button class="exp" id="flt-ok" onclick="setFilter(this)" data-f="ok">Clean ('+cl+')</button>'
+    +'</div>'
+    +'<button class="exp" onclick="expXL()" style="margin-left:auto">&#8595; Export to Excel</button>'
+    +'<button class="exp" id="gsBtn" onclick="expGS()" style="margin-left:6px;background:rgba(0,161,154,.1);border-color:var(--k);color:var(--k)">&#9650; Export to Google Sheets</button></div>'
     +'<div class="tw"><table class="rt"><thead><tr>'+ths+'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 
   document.getElementById("main").innerHTML=
@@ -688,6 +849,26 @@ function render(){
 
   // Restore active tab
   showVTab(currentVTab==="audit"?"audit":currentVTab);
+}
+
+var currentFilter="all";
+function setFilter(el){
+  var f=el?el.dataset.f:"all";
+  currentFilter=f;
+  ["all","issues","ok"].forEach(function(n){
+    var btn=document.getElementById("flt-"+n);
+    if(btn)btn.style.background=n===f?"rgba(0,161,154,.3)":"";
+  });
+  var rows=document.querySelectorAll("#vp-audit table.rt tbody tr");
+  rows.forEach(function(tr){
+    var badge=tr.querySelector(".badge");
+    if(!badge){tr.style.display="";return;}
+    var txt=badge.textContent.trim().toLowerCase();
+    var isOk=txt.includes("clean")||txt.includes("total");
+    if(f==="all")tr.style.display="";
+    else if(f==="issues")tr.style.display=isOk?"none":"";
+    else if(f==="ok")tr.style.display=isOk?"":"none";
+  });
 }
 
 // ─── Payment Confirmation Tab ─────────────────────────────────────────────
@@ -802,13 +983,19 @@ function calcTotals(){
   var totalApproved=0,disputeAmount=0,totalSuggested=0;
   aRows.forEach(function(r){
     if(r.isTotal)return; // skip total rows from financial calcs
-    if(r.status==="ok"){
-      // Clean row — always approved at billed amount
+    var ovs=getOverrides();
+    var rpk=payKey(r.sessionId,r.rowIdx);
+    var isManuallyflagged=r.status==="ok"&&ovs[rpk];
+    if(r.status==="ok"&&!isManuallyflagged){
+      // Clean row with no override — always approved at billed amount
       totalApproved+=r.amtNum;
     } else {
       var pk=payKey(r.sessionId,r.rowIdx);
       var conf=payConf[pk]||{amtPaid:"",status:"Pending"};
-      if(conf.status==="Confirmed"&&conf.amtPaid){
+      if(isManuallyflagged&&conf.status==="Pending"){
+        // Manually flagged clean row with no confirmation yet — treat as pending dispute
+        disputeAmount+=r.amtNum;
+      } else if(conf.status==="Confirmed"&&conf.amtPaid){
         // Confirmed with amount — approved=paid, dispute=billed-paid
         var paid=parseFloat(String(conf.amtPaid).replace(/[$,\s]/g,""))||0;
         totalApproved+=paid;
@@ -881,6 +1068,53 @@ function renderHistoryTab(){
 
 function toggleHist(id){var el=document.getElementById(id);if(el)el.style.display=el.style.display==="block"?"none":"block";}
 function clearHistory(){if(confirm("Clear all audit history? This cannot be undone.")){lsSet("lvt_history",[]);renderHistoryTab();}}
+
+function expHistXL(idx){
+  var hist=getHistory();
+  var h=hist[idx];
+  if(!h||!h.rows)return;
+  var fmt2=function(v){
+    var n=parseFloat(String(v).replace(/[$,]/g,""));
+    return isNaN(n)?"—":"$"+n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+  };
+  var shortCode=function(issues){
+    if(!issues||!issues.length)return"—";
+    var codes=[];
+    issues.forEach(function(x){
+      if(x.includes("Bundling"))codes.push("Bundling Violation");
+      else if(x.includes("Cross"))codes.push("Cross-Session Duplicate");
+      else if(x.includes("Duplicate"))codes.push("Duplicate");
+      else if(x.includes("Fee violation"))codes.push("Fee Mismatch");
+      else if(x.includes("Math error"))codes.push("Math Error");
+      else if(x.includes("fee schedule"))codes.push("Needs Review");
+      else if(x.includes("No Work Order"))codes.push("Missing Reference");
+      else if(x.includes("Additional"))codes.push("Approval Required");
+      else if(x.includes("Invalid combination"))codes.push("Invalid Combination");
+      else codes.push("Review Required");
+    });
+    return codes.filter(function(v,i,a){return a.indexOf(v)===i;}).join(", ");
+  };
+  var rows=h.rows.map(function(r){
+    return{
+      "Work Order":r.id,"Service":r.sv,"Work Type":r.wt||"",
+      "Amount Billed":fmt2(r.amt),
+      "Suggested":r.status==="ok"?"—":r.suggested===null?"Needs Review":fmt2(r.suggested),
+      "Status":r.status.toUpperCase(),
+      "Issue Code":r.status==="ok"?"—":shortCode(r.issues)
+    };
+  });
+  var totalApproved=0,totalIssues=0;
+  h.rows.forEach(function(r){if(r.status==="ok")totalApproved+=r.amtNum||0;else totalIssues++;});
+  rows.push({});
+  rows.push({"Work Order":"","Service":"VENDOR","Amount Billed":h.vendor||""});
+  rows.push({"Work Order":"","Service":"AUDIT DATE","Amount Billed":h.date||""});
+  rows.push({"Work Order":"","Service":"TOTAL APPROVED","Amount Billed":fmt2(totalApproved)});
+  var ws=XLSX.utils.json_to_sheet(rows);
+  ws["!cols"]=[{wch:16},{wch:28},{wch:18},{wch:14},{wch:14},{wch:12},{wch:24}];
+  var wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Audit Results");
+  XLSX.writeFile(wb,"LVT_audit_"+(h.vendor||"unknown").replace(/\s+/g,"_")+"_"+h.date.replace(/\s+/g,"_")+".xlsx");
+}
 
 // ─── Trends Tab ───────────────────────────────────────────────────────────
 function renderTrendsTab(){
@@ -1013,7 +1247,13 @@ function expXL(){
     if(r.status==="ok"&&!flagReason){
       approvedFmt="—";statusFmt="OK";issueCodeFmt="—";payStatusFmt="—";
     } else if(r.status==="ok"&&flagReason){
-      approvedFmt="—";statusFmt="FLAGGED";issueCodeFmt=flagReason;payStatusFmt="—";
+      // Manually flagged clean row — show pay confirmation data
+      var paid=conf.amtPaid?conf.amtPaid:"—";
+      var paidNum=parseFloat(String(paid).replace(/[$,]/g,""));
+      approvedFmt=conf.amtPaid?(isNaN(paidNum)?paid:fmt2(paidNum)):"—";
+      statusFmt="FLAGGED";
+      issueCodeFmt=flagReason;
+      payStatusFmt=conf.status==="Confirmed"?"Confirmed":conf.status==="Disputed"?"Disputed":"Pending";
     } else if(conf.status==="Confirmed"){
       // Confirmed: approved=amt paid, issue code cleared, status=CONFIRMED
       var paid=conf.amtPaid?conf.amtPaid:amtFmt;
