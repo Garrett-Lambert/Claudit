@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>LVT Invoices — Powered by Gs Wagon</title>
+<title>LVT Invoice Audit</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Source+Sans+3:wght@300;400;600&display=swap" rel="stylesheet"/>
@@ -16,7 +16,6 @@ body{background:var(--bg);color:var(--wh);font-family:'Source Sans 3',sans-serif
 .hdr::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--k)}
 .logo{width:34px;height:34px;background:var(--s);border:1px solid var(--k);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:16px;margin-left:6px}
 .h1{font-family:'Oswald',sans-serif;font-size:17px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
-.sub{font-size:9px;color:var(--k);letter-spacing:1.5px;text-transform:uppercase;font-style:italic}
 .pill{margin-left:auto;font-family:'Oswald',sans-serif;font-size:8px;color:var(--g3);background:var(--s);border:1px solid var(--g7);padding:3px 10px;border-radius:2px;letter-spacing:2px;text-transform:uppercase}
 .layout{display:grid;grid-template-columns:290px 1fr;flex:1;overflow:hidden}
 .side{background:var(--s);border-right:1px solid var(--g7);overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:16px}
@@ -157,8 +156,7 @@ table.rt tr:hover td{background:rgba(0,161,154,.04)}
     <!-- VENDOR NAME FIELD -->
     <div>
       <div class="slbl">Vendor Name <span style="color:var(--r);font-size:9px">* required</span></div>
-      <input class="fi" type="text" id="vendorName" placeholder="e.g. ABC Security Services" list="vendorList" oninput="onVendorInput()"/>
-      <datalist id="vendorList"></datalist>
+      <input class="fi" type="text" id="vendorName" placeholder="e.g. ABC Security Services" oninput="onVendorInput()"/>
     </div>
     <div id="xMap" style="display:none">
       <div class="slbl">Column Mapping</div>
@@ -191,14 +189,16 @@ table.rt tr:hover td{background:rgba(0,161,154,.04)}
       <div class="empty">
         <div style="font-size:38px;opacity:.15">&#128203;</div>
         <h2>LVT Invoice Audit</h2>
-        <p>Upload an Excel, CSV or PDF file then click Run Audit to check every row against LVT billing rules.</p>
+        <p>Upload an Excel, CSV or PDF invoice, enter the vendor name, and click Run Audit to check every row against LVT billing rules.</p>
         <div class="fgrid">
-          <div class="fc">&#128308; WOT billing detection</div>
+          <div class="fc">&#128308; Bundling violation detection</div>
           <div class="fc">&#129518; Math error checking</div>
-          <div class="fc">&#10697; Duplicate detection</div>
+          <div class="fc">&#10697; Cross-session duplicate detection</div>
           <div class="fc">&#128178; Fee schedule validation</div>
-          <div class="fc">&#128295; Setup + Transport rule</div>
+          <div class="fc">&#128295; Setup + Take Down rules</div>
           <div class="fc">&#128196; PDF auto-parsing</div>
+          <div class="fc">&#10003; Inline payment confirmation</div>
+          <div class="fc">&#128337; Audit history + trends</div>
         </div>
       </div>
     </div>
@@ -224,32 +224,15 @@ function lsGet(k){try{return JSON.parse(localStorage.getItem(k)||"null");}catch(
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 
 // ─── Vendor preference ───────────────────────────────────────────────────────
-function getVendorList(){return lsGet("lvt_vendor_list")||[];}
-function onVendorInput(){
-  // Save to recent list but never pre-fill — just gate the run button
-  var v=document.getElementById("vendorName").value.trim();
-  checkRunReady();
-}
-function saveVendorToHistory(v){
-  // Called at audit run time — saves vendor to recent list for datalist only
-  if(v){
-    var list=getVendorList();
-    if(list.indexOf(v)<0){list.unshift(v);if(list.length>20)list=list.slice(0,20);lsSet("lvt_vendor_list",list);}
-    renderVendorList();
-  }
-}
+function onVendorInput(){checkRunReady();}
+function saveVendorToHistory(v){} // no-op — vendor name is not persisted
 function loadVendorPref(){
-  // Never pre-fill the vendor name — just load the datalist for suggestions
-  renderVendorList();
+  // Never pre-fill vendor name — clear any stale saved value
+  localStorage.removeItem("lvt_vendor");
+  localStorage.removeItem("lvt_vendor_list");
   // Restore manual total row idx
   var mt=getManualTotal();
   manualTotalRowIdx=(mt!==null&&mt!==undefined)?mt:null;
-}
-function renderVendorList(){
-  var dl=document.getElementById("vendorList");
-  if(!dl)return;
-  var list=getVendorList();
-  dl.innerHTML=list.map(function(v){return"<option value='"+xe(v)+"'>";}).join("");
 }
 function checkRunReady(){
   var hasFile=pData.length>0;
