@@ -127,7 +127,7 @@ table.rt tr:hover td{background:rgba(0,161,154,.04)}
 <body>
 <div class="hdr">
   <div class="logo">&#128269;</div>
-  <div><div class="h1">LVT Invoices</div><div class="sub">Powered by Gs Wagon</div></div>
+  <div><div class="h1">LVT Invoice Audit</div></div>
   <div class="pill">Rule-Based Audit</div>
 </div>
 <div class="layout">
@@ -156,8 +156,8 @@ table.rt tr:hover td{background:rgba(0,161,154,.04)}
     </div>
     <!-- VENDOR NAME FIELD -->
     <div>
-      <div class="slbl">Vendor Name</div>
-      <input class="fi" type="text" id="vendorName" placeholder="e.g. ABC Security Services" list="vendorList" oninput="saveVendorPref()"/>
+      <div class="slbl">Vendor Name <span style="color:var(--r);font-size:9px">* required</span></div>
+      <input class="fi" type="text" id="vendorName" placeholder="e.g. ABC Security Services" list="vendorList" oninput="onVendorInput()"/>
       <datalist id="vendorList"></datalist>
     </div>
     <div id="xMap" style="display:none">
@@ -225,9 +225,13 @@ function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 
 // ─── Vendor preference ───────────────────────────────────────────────────────
 function getVendorList(){return lsGet("lvt_vendor_list")||[];}
-function saveVendorPref(){
+function onVendorInput(){
+  // Save to recent list but never pre-fill — just gate the run button
   var v=document.getElementById("vendorName").value.trim();
-  lsSet("lvt_vendor",v);
+  checkRunReady();
+}
+function saveVendorToHistory(v){
+  // Called at audit run time — saves vendor to recent list for datalist only
   if(v){
     var list=getVendorList();
     if(list.indexOf(v)<0){list.unshift(v);if(list.length>20)list=list.slice(0,20);lsSet("lvt_vendor_list",list);}
@@ -235,15 +239,22 @@ function saveVendorPref(){
   }
 }
 function loadVendorPref(){
-  var v=lsGet("lvt_vendor");
-  if(v)document.getElementById("vendorName").value=v;
+  // Never pre-fill the vendor name — just load the datalist for suggestions
   renderVendorList();
+  // Restore manual total row idx
+  var mt=getManualTotal();
+  manualTotalRowIdx=(mt!==null&&mt!==undefined)?mt:null;
 }
 function renderVendorList(){
   var dl=document.getElementById("vendorList");
   if(!dl)return;
   var list=getVendorList();
   dl.innerHTML=list.map(function(v){return"<option value='"+xe(v)+"'>";}).join("");
+}
+function checkRunReady(){
+  var hasFile=pData.length>0;
+  var hasVendor=document.getElementById("vendorName").value.trim().length>0;
+  document.getElementById("runBtn").disabled=!(hasFile&&hasVendor);
 }
 
 // ─── WO Memory (cross-session duplicate tracking) ───────────────────────────
@@ -352,6 +363,24 @@ function showFlagSelect(btn){
     +"</select>";
 }
 
+// ─── Manual total row storage ───────────────────────────────────────────────
+var manualTotalRowIdx=null; // tracks which rowIdx is manually marked as total
+function getManualTotal(){return lsGet("lvt_manual_total");}
+function saveManualTotal(idx){lsSet("lvt_manual_total",idx);manualTotalRowIdx=idx;}
+function clearManualTotal(){lsSet("lvt_manual_total",null);manualTotalRowIdx=null;}
+
+function toggleManualTotal(rowIdx){
+  if(manualTotalRowIdx===rowIdx){
+    // Unmark — clicking same row again
+    clearManualTotal();
+  } else {
+    // Mark this row — unmarks previous automatically
+    saveManualTotal(rowIdx);
+  }
+  // Re-run audit to apply change
+  go();
+}
+
 // ─── Audit history storage ───────────────────────────────────────────────────
 function getHistory(){return lsGet("lvt_history")||[];}
 function saveHistory(h){lsSet("lvt_history",h);}
@@ -392,9 +421,9 @@ function loadXlsx(inp){var f=inp.files[0];if(!f)return;var r=new FileReader();r.
   pData=pData.map(function(row){return vCols.map(function(i){return row[i]!==undefined?row[i]:"";});});
   cMap=autoMap(hdrs);cMap.amts=[];cMap.pdf=false;
   var cd=em(hdrs,"charge")||fm(hdrs,["charge","total","amount","billed","fee","cost"]);if(cd)cMap.amts=[cd];
-  document.getElementById("chipXN").textContent=f.name;document.getElementById("chipXR").textContent=pData.length+" rows";document.getElementById("chipX").style.display="flex";document.getElementById("runBtn").disabled=false;showXMap();showPrev();}catch(err){alert("Error: "+err.message);}};r.readAsArrayBuffer(f);}
+  document.getElementById("chipXN").textContent=f.name;document.getElementById("chipXR").textContent=pData.length+" rows";document.getElementById("chipX").style.display="flex";document.getElementById("vendorName").value="";clearManualTotal();checkRunReady();showXMap();showPrev();}catch(err){alert("Error: "+err.message);}};r.readAsArrayBuffer(f);}
 
-function clearX(){pData=[];hdrs=[];aRows=[];document.getElementById("fileX").value="";document.getElementById("chipX").style.display="none";document.getElementById("xMap").style.display="none";document.getElementById("runBtn").disabled=true;document.getElementById("main").innerHTML=emH();document.getElementById("vtabs").style.display="none";}
+function clearX(){pData=[];hdrs=[];aRows=[];document.getElementById("fileX").value="";document.getElementById("chipX").style.display="none";document.getElementById("xMap").style.display="none";document.getElementById("runBtn").disabled=true;document.getElementById("main").innerHTML=emH();document.getElementById("vtabs").style.display="none";document.getElementById("vendorName").value="";}
 function em(h,n){var l=n.toLowerCase();var i=h.findIndex(function(x){return x.toLowerCase().trim()===l;});return i>=0?h[i]:"";}
 function fm(h,ks){var l=h.map(function(x){return x.toLowerCase();});var i=l.findIndex(function(x){return ks.some(function(k){return x.includes(k);});});return i>=0?h[i]:"";}
 function autoMap(h){return{id:em(h,"work order")||fm(h,["work order","wo#","invoice","inv"]),v:fm(h,["vendor","supplier","company","name"]),sv:fm(h,["service","item","description","desc","product","code"]),tk:em(h,"work order task")||fm(h,["work order task","task"]),wt:em(h,"work type")||fm(h,["work type","worktype","type","category"]),qty:fm(h,["qty","quantity","units","count"]),up:fm(h,["unit price","unit rate","each","per unit"]),amts:[]};}
@@ -409,8 +438,8 @@ function showXMap(){
 }
 function updAmt(sel){cMap.amts=Array.prototype.slice.call(sel.options).filter(function(o){return o.selected;}).map(function(o){return o.value;});}
 function showPrev(){var rows=pData.slice(0,5).map(function(row){return "<tr>"+hdrs.map(function(_,i){return "<td>"+xe(String(row[i]||""))+"</td>";}).join("")+"</tr>";}).join("");document.getElementById("main").innerHTML='<div class="card"><div class="ch"><div class="bar"></div><h4>Data Preview</h4><span class="mt">'+pData.length+' rows &middot; '+hdrs.length+' cols</span></div><div class="tw"><table class="rt"><thead><tr>'+hdrs.map(function(h){return "<th>"+xe(h)+"</th>";}).join("")+'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';}
-function loadPdf(inp){var f=inp.files[0];if(!f)return;document.getElementById("main").innerHTML='<div class="ld"><div class="sp"></div>Parsing PDF...</div>';var r=new FileReader();r.onload=function(e){pdfjsLib.getDocument({data:new Uint8Array(e.target.result)}).promise.then(function(pdf){var proms=[];for(var i=1;i<=pdf.numPages;i++){proms.push(pdf.getPage(i).then(function(pg){return pg.getTextContent().then(function(tc){return tc.items.map(function(it){return it.str;}).join("\n");});}));}return Promise.all(proms);}).then(function(pages){var invs=[];pages.forEach(function(txt,idx){var inv=parsePg(txt,idx+1);if(inv)invs.push(inv);});if(invs.length===0){alert("Could not extract invoice data.");document.getElementById("main").innerHTML=emH();return;}hdrs=["Invoice #","Work Order","Description","Amount","Notes","Page"];pData=invs.map(function(v){return[v.n,v.wo,v.d,v.a,v.nt,v.pg];});cMap={amts:[],pdf:true};document.getElementById("chipPN").textContent=f.name;document.getElementById("chipPR").textContent=invs.length+" invoices";document.getElementById("chipP").style.display="flex";document.getElementById("runBtn").disabled=false;showPdfPrev(invs);}).catch(function(err){alert("PDF error: "+err.message);document.getElementById("main").innerHTML=emH();});};r.readAsArrayBuffer(f);}
-function clearP(){pData=[];hdrs=[];aRows=[];document.getElementById("fileP").value="";document.getElementById("chipP").style.display="none";document.getElementById("runBtn").disabled=true;document.getElementById("main").innerHTML=emH();document.getElementById("vtabs").style.display="none";}
+function loadPdf(inp){var f=inp.files[0];if(!f)return;document.getElementById("main").innerHTML='<div class="ld"><div class="sp"></div>Parsing PDF...</div>';var r=new FileReader();r.onload=function(e){pdfjsLib.getDocument({data:new Uint8Array(e.target.result)}).promise.then(function(pdf){var proms=[];for(var i=1;i<=pdf.numPages;i++){proms.push(pdf.getPage(i).then(function(pg){return pg.getTextContent().then(function(tc){return tc.items.map(function(it){return it.str;}).join("\n");});}));}return Promise.all(proms);}).then(function(pages){var invs=[];pages.forEach(function(txt,idx){var inv=parsePg(txt,idx+1);if(inv)invs.push(inv);});if(invs.length===0){alert("Could not extract invoice data.");document.getElementById("main").innerHTML=emH();return;}hdrs=["Invoice #","Work Order","Description","Amount","Notes","Page"];pData=invs.map(function(v){return[v.n,v.wo,v.d,v.a,v.nt,v.pg];});cMap={amts:[],pdf:true};document.getElementById("chipPN").textContent=f.name;document.getElementById("chipPR").textContent=invs.length+" invoices";document.getElementById("chipP").style.display="flex";document.getElementById("vendorName").value="";clearManualTotal();checkRunReady();showPdfPrev(invs);}).catch(function(err){alert("PDF error: "+err.message);document.getElementById("main").innerHTML=emH();});};r.readAsArrayBuffer(f);}
+function clearP(){pData=[];hdrs=[];aRows=[];document.getElementById("fileP").value="";document.getElementById("chipP").style.display="none";document.getElementById("runBtn").disabled=true;document.getElementById("main").innerHTML=emH();document.getElementById("vtabs").style.display="none";document.getElementById("vendorName").value="";}
 function parsePg(txt,pg){var lines=txt.split("\n").map(function(l){return l.trim();}).filter(function(l){return l.length>0;});var n="",wo="",descs=[],amts=[],nt="",bal=0;for(var i=0;i<lines.length;i++){if(lines[i]==="Invoice Number"&&lines[i+1])n=lines[i+1].trim();else{var m=lines[i].match(/^Invoice Number\s+(\d+)/);if(m)n=m[1];}if(lines[i]==="PO Number"&&lines[i+1]&&/^WO/i.test(lines[i+1]))wo=lines[i+1].trim();else{var m=lines[i].match(/^PO Number\s+(WO\S+)/i);if(m)wo=m[1];}var m2=lines[i].match(/^(\d+\.?\d*)\s+(.+?)\s+(\d+\.?\d+)\s+(\d+\.?\d+)$/);if(m2&&parseFloat(m2[3])>0){descs.push(m2[2].trim());amts.push(parseFloat(m2[4]));}var m3=lines[i].match(/Invoice Balance Due:?\s*\$?([\d,]+\.?\d*)/);if(m3)bal=parseFloat(m3[1].replace(/,/g,""));if(lines[i]==="IMPORTANT MESSAGES"){var nl=[];for(var j=i+1;j<Math.min(i+6,lines.length);j++){if(lines[j]==="Please return this portion. Do not staple or fold.")break;if(lines[j].length>3)nl.push(lines[j]);}nt=nl.join(" ");}}var desc=descs.length>0?descs[0]:"Labor for repair call";var amt=amts.length>0?amts.reduce(function(a,b){return a+b;},0):bal;if(!n&&!wo&&amt===0)return null;return{pg:pg,n:n||("P"+pg),wo:wo,d:desc,a:amt,nt:nt};}
 function showPdfPrev(invs){var rows=invs.slice(0,8).map(function(v){return "<tr><td style='font-family:monospace;font-size:10px'>"+xe(v.n)+"</td><td style='font-family:monospace;font-size:10px'>"+xe(v.wo)+"</td><td>"+xe(v.d)+"</td><td style='font-family:monospace'>$"+v.a.toFixed(2)+"</td><td style='font-size:9px;color:var(--g7)'>"+xe(v.nt.slice(0,50))+"</td></tr>";}).join("");document.getElementById("main").innerHTML='<div class="card"><div class="ch"><div class="bar"></div><h4>PDF Parsed</h4><span class="mt">'+invs.length+' invoices found</span></div><div class="tw"><table class="rt"><thead><tr><th>Invoice #</th><th>Work Order</th><th>Description</th><th>Amount</th><th>Notes</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';}
 function gv(row,k){var c=cMap[k];if(!c)return "";if(typeof c==="number")return String(row[c]||"");var i=hdrs.indexOf(c);return i>=0?String(row[i]||""):""}
@@ -478,7 +507,7 @@ function go(){
   var feeMap={};fees.forEach(function(f){if(f.s)feeMap[no(f.s)]=parseFloat(f.r)||0;});
   var seen={},byId={};
   var wom=getWOMem();
-  var vendorName=document.getElementById("vendorName").value.trim()||"Unknown Vendor";
+  var vendorName=document.getElementById("vendorName").value.trim()||"Unknown Vendor";saveVendorToHistory(vendorName);
   var sessionDate=new Date().toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"});
   currentSessionId=newSessionId();
 
@@ -507,6 +536,11 @@ function go(){
     else{id=String(gv(row,"id")||"");vd=vendorName;sv=String(gv(row,"sv")||"");tk=String(gv(row,"tk")||"");wt=String(gv(row,"wt")||"");nt="";amt=ga(row);ad=amt>0?"$"+amt.toFixed(2):"$0.00";}
     var sn=no(sv),idn=no(id),wn=no(wt),nn=no(nt);
     var iss=[],st="ok",suggested=null;
+
+    // ── MANUAL TOTAL ROW — user explicitly marked this row ─────────────
+    if(manualTotalRowIdx!==null&&manualTotalRowIdx===i){
+      return{row:i+1,id:id,vd:vendorName,sv:sv,tk:tk,wt:wt,amt:ad,nt:nt,status:"ok",issues:[],suggested:null,amtNum:amt,sessionId:currentSessionId,rowIdx:i,isTotal:true,isManualTotal:true};
+    }
 
     // ── TOTAL ROW detection (logic-based: no WO + no WOT + amt ≈ line item sum)
     var noRef=!id.trim()&&!tk.trim();
@@ -735,6 +769,9 @@ function render(){
         +"<td>"+totalIss+"</td>"
         +"<td>"+dash+"</td>"
         +"<td>"+dash+"</td>"
+        +(r.isManualTotal
+          ?"<td><button class='flag-btn' style='color:var(--k);border-color:var(--k)' onclick='toggleManualTotal("+r.rowIdx+")' title='Unmark as total'>&#8721;</button></td>"
+          :"<td>"+dash+"</td>")
         +"</tr>";
     }
     // ── NORMAL ROW ───────────────────────────────────────────────────────
@@ -827,10 +864,11 @@ function render(){
       +"<td>"+displayIss+"</td>"
       +"<td>"+payCell+"</td>"
       +flagCell
+      +"<td><button class='flag-btn"+(manualTotalRowIdx===r.rowIdx?" style=\"color:var(--k);border-color:var(--k)\"":"")+"' onclick='toggleManualTotal("+r.rowIdx+")' title='"+(manualTotalRowIdx===r.rowIdx?"Unmark as total":"Mark as invoice total")+"'>&#8721;</button></td>"
       +"</tr>";
   }).join("");
   function sc(l,v,c){return'<div class="sc"><div style="position:absolute;top:0;left:0;right:0;height:3px;background:'+c+'"></div><div class="lb">'+l+'</div><div class="vl" style="color:'+c+'">'+v+"</div></div>";}
-  var ths=ip?"<th>#</th><th>Invoice/WO</th><th>Description</th><th>Notes</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th><th>Flag</th>":"<th>#</th><th>Work Order</th><th>WO Task</th><th>Service</th><th>Work Type</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th><th>Flag</th>";
+  var ths=ip?"<th>#</th><th>Invoice/WO</th><th>Description</th><th>Notes</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th><th>Flag</th><th title='Mark as Invoice Total'>&#8721;</th>":"<th>#</th><th>Work Order</th><th>WO Task</th><th>Service</th><th>Work Type</th><th>Amount</th><th>Suggested</th><th>Approved</th><th>Status</th><th>Issues</th><th>Payment</th><th>Flag</th><th title='Mark as Invoice Total'>&#8721;</th>";
 
   // Build panels
   var auditHTML=
